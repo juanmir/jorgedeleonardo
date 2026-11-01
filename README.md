@@ -85,8 +85,8 @@ Todo en la región **us-east-1** (es obligatoria para el certificado de CloudFro
    aws cloudformation describe-stacks --region us-east-1 --stack-name jorgedeleonardo-github \
      --query "Stacks[0].Outputs[0].OutputValue" --output text
    ```
-   Copia ese ARN en GitHub → *Settings → Secrets and variables → Actions → Variables*
-   como `AWS_ROLE_ARN`.
+   El ARN ya está puesto por defecto en `.github/workflows/deploy.yml`. Si cambia, ponlo
+   en GitHub → *Settings → Secrets and variables → Actions → Variables* como `AWS_ROLE_ARN`.
 
 2. **Web de pruebas** (`nueva.jorgedeleonardo.com`):
    ```bash
@@ -98,8 +98,9 @@ Todo en la región **us-east-1** (es obligatoria para el certificado de CloudFro
    ```
    Tarda ~10 minutos (el certificado y CloudFront). Después, lanza *Desplegar* en Actions.
 
-3. **Imágenes:** Actions → *Importar imágenes de WordPress* → Run workflow.
-   Las copia optimizadas a `public/media`. Hazlo antes de apagar WordPress.
+3. **Imágenes:** cada despliegue trae de WordPress las que falten y las guarda en
+   `public/media` (también se puede lanzar a mano: Actions → *Importar imágenes de WordPress*).
+   Comprueba que están todas antes de apagar WordPress.
 
 ## Paso a producción (cuando Jorge dé el visto bueno)
 

@@ -15,7 +15,7 @@ on:
 
 permissions:
   id-token: write
-  contents: read
+  contents: write   # para guardar en el repo las imágenes importadas
 
 concurrency:
   group: deploy-${{ inputs.destino || 'staging' }}
@@ -35,14 +35,28 @@ jobs:
           node-version: 22
 
       - name: Instalar
-        run: npm install --no-audit --no-fund --omit=optional
+        run: npm install --no-audit --no-fund
+
+      # Mientras exista WordPress, trae las imágenes que falten y las guarda en el repo.
+      # Si ya están todas, no hace nada.
+      - name: Importar imágenes que falten
+        continue-on-error: ${{ (inputs.destino || 'staging') == 'staging' }}
+        run: |
+          node scripts/import-media.mjs
+          git add public/media
+          if ! git diff --cached --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "Importar imágenes de WordPress"
+            git push
+          fi
 
       - name: Generar la web
         run: node build.mjs
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN || 'arn:aws:iam::851446486985:role/jorgedeleonardo-github-deploy' }}
           aws-region: us-east-1
 
       - name: Leer la infraestructura
@@ -52,7 +66,7 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
           echo "BUCKET=$(out BucketName)" >> "$GITHUB_ENV"
           echo "DISTRIBUTION=$(out DistributionId)" >> "$GITHUB_ENV"
-          echo "FUNCTION=$(out FunctionName)" >> "$GITHUB_ENV"
+          F=$(out FunctionName); echo "FUNCTION=${F##*/}" >> "$GITHUB_ENV"   # el output es el ARN
           echo "URL=$(out Url)" >> "$GITHUB_ENV"
 
       - name: Subir ficheros
