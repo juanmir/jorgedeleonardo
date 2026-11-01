@@ -7,6 +7,10 @@ Parameters:
   GitHubRepo:
     Type: String
     Default: juanmir/jorgedeleonardo
+  GitHubRepoWithIds:
+    Type: String
+    Default: juanmir@64681173/jorgedeleonardo@1442145778
+    Description: El mismo repo con los IDs de usuario y repositorio de GitHub
   CreateOidcProvider:
     Type: String
     AllowedValues: ['true', 'false']
@@ -39,7 +43,11 @@ Resources:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:*
+                # GitHub puede identificar el repo por nombre (juanmir/jorgedeleonardo)
+                # o por IDs inmutables (juanmir@64681173/jorgedeleonardo@1442145778).
+                token.actions.githubusercontent.com:sub:
+                  - !Sub repo:${GitHubRepo}:*
+                  - !Sub repo:${GitHubRepoWithIds}:*
       Policies:
         - PolicyName: deploy
           PolicyDocument:
