@@ -1,0 +1,200 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Web estática de jorgedeleonardo.com: bucket S3 privado + CloudFront + certificado HTTPS.
+  Se despliega DOS veces en us-east-1 (obligatorio para el certificado de CloudFront):
+  jorgedeleonardo-staging (nueva.jorgedeleonardo.com) y jorgedeleonardo-production (jorgedeleonardo.com).
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [staging, production]
+  DomainName:
+    Type: String
+    Description: Dominio principal (p. ej. nueva.jorgedeleonardo.com o jorgedeleonardo.com)
+  AlternateDomainName:
+    Type: String
+    Default: ''
+    Description: Dominio extra que redirige al principal (p. ej. www.jorgedeleonardo.com). Vacío si no hay.
+  HostedZoneId:
+    Type: AWS::Route53::HostedZone::Id
+    Description: Zona de Route 53 de jorgedeleonardo.com
+  CreateDnsRecords:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+    Description: >
+      'false' en producción mientras el dominio siga apuntando a WordPress.
+      Cuando se hace el cambio, se borran los registros antiguos y se pone 'true'.
+
+Conditions:
+  HasAlt: !Not [!Equals [!Ref AlternateDomainName, '']]
+  IsStaging: !Equals [!Ref Environment, staging]
+  CreateDns: !Equals [!Ref CreateDnsRecords, 'true']
+  CreateAltDns: !And [!Condition HasAlt, !Condition CreateDns]
+
+Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub jorgedeleonardo-${Environment}-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+
+  OriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub jorgedeleonardo-${Environment}
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref Bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CloudFrontRead
+            Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub ${Bucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}
+
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      SubjectAlternativeNames: !If [HasAlt, [!Ref AlternateDomainName], !Ref AWS::NoValue]
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+        - !If
+          - HasAlt
+          - DomainName: !Ref AlternateDomainName
+            HostedZoneId: !Ref HostedZoneId
+          - !Ref AWS::NoValue
+
+  # El código real (con las redirecciones) lo sube GitHub Actions en cada despliegue.
+  ViewerRequestFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub jorgedeleonardo-${Environment}-viewer-request
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Redirecciones y URLs limpias (se actualiza desde GitHub Actions)
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+          var r = event.request;
+          if (r.uri.endsWith('/')) r.uri += 'index.html';
+          return r;
+        }
+
+  ResponseHeaders:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub jorgedeleonardo-${Environment}-headers
+        SecurityHeadersConfig:
+          StrictTransportSecurity: { AccessControlMaxAgeSec: 31536000, IncludeSubdomains: false, Override: true }
+          ContentTypeOptions: { Override: true }
+          FrameOptions: { FrameOption: SAMEORIGIN, Override: true }
+          ReferrerPolicy: { ReferrerPolicy: strict-origin-when-cross-origin, Override: true }
+        CustomHeadersConfig: !If
+          - IsStaging
+          - Items:
+              - { Header: X-Robots-Tag, Value: 'noindex, nofollow', Override: true }
+          - !Ref AWS::NoValue
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub jorgedeleonardo.com (${Environment})
+        Aliases: !If [HasAlt, [!Ref DomainName, !Ref AlternateDomainName], [!Ref DomainName]]
+        DefaultRootObject: index.html
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: s3
+            DomainName: !GetAtt Bucket.RegionalDomainName
+            OriginAccessControlId: !Ref OriginAccessControl
+            S3OriginConfig: { OriginAccessIdentity: '' }
+        DefaultCacheBehavior:
+          TargetOriginId: s3
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized
+          ResponseHeadersPolicyId: !Ref ResponseHeaders
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt ViewerRequestFunction.FunctionMetadata.FunctionARN
+        CustomErrorResponses:
+          - { ErrorCode: 403, ResponseCode: 404, ResponsePagePath: /404.html, ErrorCachingMinTTL: 60 }
+          - { ErrorCode: 404, ResponseCode: 404, ResponsePagePath: /404.html, ErrorCachingMinTTL: 60 }
+        ViewerCertificate:
+          AcmCertificateArn: !Ref Certificate
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+
+  DnsA:
+    Type: AWS::Route53::RecordSet
+    Condition: CreateDns
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget: { DNSName: !GetAtt Distribution.DomainName, HostedZoneId: Z2FDTNDATAQYW2 }
+  DnsAAAA:
+    Type: AWS::Route53::RecordSet
+    Condition: CreateDns
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: AAAA
+      AliasTarget: { DNSName: !GetAtt Distribution.DomainName, HostedZoneId: Z2FDTNDATAQYW2 }
+  DnsAltA:
+    Type: AWS::Route53::RecordSet
+    Condition: CreateAltDns
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref AlternateDomainName
+      Type: A
+      AliasTarget: { DNSName: !GetAtt Distribution.DomainName, HostedZoneId: Z2FDTNDATAQYW2 }
+  DnsAltAAAA:
+    Type: AWS::Route53::RecordSet
+    Condition: CreateAltDns
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref AlternateDomainName
+      Type: AAAA
+      AliasTarget: { DNSName: !GetAtt Distribution.DomainName, HostedZoneId: Z2FDTNDATAQYW2 }
+
+Outputs:
+  BucketName:
+    Value: !Ref Bucket
+  DistributionId:
+    Value: !Ref Distribution
+  DistributionDomain:
+    Description: Dirección de CloudFront (sirve para probar antes de cambiar el DNS)
+    Value: !GetAtt Distribution.DomainName
+  FunctionName:
+    Value: !Ref ViewerRequestFunction
+  Url:
+    Value: !Sub https://${DomainName}/

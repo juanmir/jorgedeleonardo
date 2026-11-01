@@ -1,0 +1,67 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Permite que GitHub Actions (solo el repo indicado) despliegue la web sin guardar claves de AWS.
+  Se crea una vez, en cualquier región. Stack: jorgedeleonardo-github
+
+Parameters:
+  GitHubRepo:
+    Type: String
+    Default: juanmir/jorgedeleonardo
+  CreateOidcProvider:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+    Description: "'false' si la cuenta ya tiene el proveedor token.actions.githubusercontent.com (p. ej. por otro proyecto)"
+
+Conditions:
+  CreateProvider: !Equals [!Ref CreateOidcProvider, 'true']
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: jorgedeleonardo-github-deploy
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:*
+      Policies:
+        - PolicyName: deploy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [s3:ListBucket]
+                Resource: arn:aws:s3:::jorgedeleonardo-*
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Resource: arn:aws:s3:::jorgedeleonardo-*/*
+              - Effect: Allow
+                Action: [cloudfront:CreateInvalidation]
+                Resource: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/*
+              - Effect: Allow
+                Action: [cloudfront:DescribeFunction, cloudfront:UpdateFunction, cloudfront:PublishFunction]
+                Resource: !Sub arn:aws:cloudfront::${AWS::AccountId}:function/jorgedeleonardo-*
+              - Effect: Allow
+                Action: [cloudformation:DescribeStacks]
+                Resource: !Sub arn:aws:cloudformation:us-east-1:${AWS::AccountId}:stack/jorgedeleonardo-*/*
+
+Outputs:
+  RoleArn:
+    Description: Pon este valor en GitHub → Settings → Secrets and variables → Actions → Variables → AWS_ROLE_ARN
+    Value: !GetAtt DeployRole.Arn

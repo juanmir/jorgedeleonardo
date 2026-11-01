@@ -1,0 +1,34 @@
+name: Importar imágenes de WordPress
+
+# Ejecutar una vez (y siempre antes de apagar WordPress):
+# Actions → «Importar imágenes de WordPress» → Run workflow.
+# Descarga las imágenes originales, las optimiza y las guarda en public/media.
+on:
+  workflow_dispatch:
+    inputs:
+      todas:
+        description: Volver a descargar también las que ya están
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: node scripts/import-media.mjs ${{ inputs.todas && '--all' || '' }}
+      - name: Guardar en el repositorio
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/media
+          if git diff --cached --quiet; then echo "Nada nuevo"; exit 0; fi
+          git commit -m "Importar imágenes de WordPress"
+          git push

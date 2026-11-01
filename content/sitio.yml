@@ -1,0 +1,20 @@
+# Ajustes generales de la web
+nombre: Jorge de Leonardo
+descripcion: Escritor de novela policíaca, juvenil e infantil. Autor de Calima, El enigma de las cometas y la serie de Jota.
+url: https://jorgedeleonardo.com
+cita: Tú no escoges los libros; ellos te eligen a ti
+foto_autor: media/2024/11/1730710957045.jpg
+
+# Si tu tío quiere recibir correos desde la web, pon aquí su email
+email: ""
+
+redes:
+  - nombre: Instagram
+    usuario: "@jorgedeleonardo"
+    url: https://www.instagram.com/jorgedeleonardo/
+  - nombre: X
+    usuario: "@JorgedeLeonard1"
+    url: https://x.com/JorgedeLeonard1
+  - nombre: YouTube
+    usuario: Canal de Jorge de Leonardo
+    url: https://www.youtube.com/channel/UCBhMkac6lGabTryw9BZn95w
